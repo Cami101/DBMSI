@@ -1,90 +1,79 @@
-#include <iostream>
 #ifndef STACK_H
 #define STACK_H
-using namespace std;
+
+#include <stdexcept>
 // this is the node class used to build up the LIFO stack
-template <class Data>// here data is input parameter
+template <class Data>
 class Node {
 
 private:
 
 	Data holdMe;
-	Node *next;
-
+	Node* next;
+	
 public:
 
-	/*****************************************/
-	/** WHATEVER CODE YOU NEED TO ADD HERE!! */
-	/*****************************************/
-    Data getData() {
-        return holdMe;
-    }
+	Node(Data val, Node* nextNode = nullptr) : holdMe(val), next(nextNode) {}
 
-    void setData(Data data) {
-        holdMe = data;
-    }
+	Data getVal() {
+		return holdMe;
+	}
 
-    Node* getNext() {
-        return next;
-    }
+	Node* getNext() {
+		return next;
+	}
 
-    void setNext(Node* nextNode) {
-        next = nextNode;
-    }
+	void setNext(Node* next) {
+		this->next = next;
+	}
+
 };
 
 // a simple LIFO stack
-template <class Data>
+template <class Data> 
 class Stack {
 
-	Node<Data> *head;
+	Node<Data>* head;
 
 public:
 
 	// destroys the stack
-	~Stack () { /* your code here */
-        Node<Data> *cur = head;
-        while (cur != NULL) {
-            Node<Data> *next = cur->getNext();
-            delete cur;
-            cur = next;
-        }
+	~Stack () {
+		Node<Data>* curr = head;
+		while (curr != nullptr) {
+			Node<Data>* next = curr->getNext();
+			delete curr;
+			curr = next;
+		}
 	}
 
 	// creates an empty stack
 	Stack () {
-        head = NULL;
+		head = nullptr;
 	}
 
 	// adds pushMe to the top of the stack
-	void push (Data data) {
-//	    cout << data << endl;
-        Node<Data> *newHead = new Node<Data>;
-        newHead->setData(data);
-        newHead->setNext(head);
-//        cout << newHead->getData() << endl;
-        head = newHead;
-//        cout << head->getData() << endl;
+	void push (Data val) {
+		Node<Data>* newHead = new Node<Data>(val, head);
+		head = newHead;
 	}
 
 	// return true if there are not any items in the stack
 	bool isEmpty () {
-        return head == NULL;
+		return head == nullptr;
 	}
 
 	// pops the item on the top of the stack off, returning it...
 	// if the stack is empty, the behavior is undefined
-	Data pop () { /* replace with your code */
-        if (head != NULL) {
-            Node<Data> *cur = head;
-            Data data = head->getData();
-            head = head->getNext();
-            delete cur;
-            return data;
-        }
-        else {
-            return Data();
-        }
+	Data pop () {
+		if (head == nullptr) {
+			throw std::runtime_error("Cannot pop from empty stack");
+		}
+		Data val = head->getVal();
+		Node<Data>* newHead = head->getNext();
+		delete head;
+		head = newHead;
+		return val;
 	}
 };
 

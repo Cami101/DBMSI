@@ -1,17 +1,20 @@
-
 #ifndef BUFFER_MGR_H
 #define BUFFER_MGR_H
 
-//#include "MyDB_PageHandle.h"
-//#include "MyDB_Table.h"
-
-#include <map>
-#include <list>
+#include "MyDB_PageHandle.h"
+#include "MyDB_Table.h"
+#include "LRUCache.h"
+#include "MyDB_Page.h"
 #include <vector>
-#include "./MyDB_PageHandle.h"
-#include "../../Catalog/headers/MyDB_Table.h"
+#include <unordered_map>
+#include <string>
 
 using namespace std;
+
+class MyDB_PageHandleBase;
+typedef shared_ptr<MyDB_PageHandleBase> MyDB_PageHandle;
+class LRUCache;
+class MyDB_Page;
 
 class MyDB_BufferManager {
 
@@ -42,7 +45,14 @@ public:
 	// un-pins the specified page
 	void unpin (MyDB_PageHandle unpinMe);
 
-	// creates an LRU buffer manager... params are as follows:
+	void materialize (MyDB_Page* page);
+
+	char* getAFrame ();
+
+	void cleanFrame(MyDB_Page* page);
+	
+
+    // creates an LRU buffer manager... params are as follows:
 	// 1) the size of each page is pageSize 
 	// 2) the number of pages managed by the buffer manager is numPages;
 	// 3) temporary pages are written to the file tempFile
@@ -53,28 +63,19 @@ public:
 	// and any temporary files need to be deleted
 	~MyDB_BufferManager ();
 
-	// FEEL FREE TO ADD ADDITIONAL PUBLIC METHODS
-    void remove(MyDB_Page &page);
-
-    void process(MyDB_Page &page);
-
-    bool evictLRU();
+	LRUCache* lru;
 
 private:
 
-	// YOUR STUFF HERE
-	vector<void*> buffer;
 	size_t pageSize;
-	size_t numPages;
 	string tempFile;
 
-    long anonIndex;// keep track of the id of anonymous pages
-
-    long globalTimeStamp;
-
-    map<pair<MyDB_TablePtr, long>, MyDB_PagePtr> page_map;// pair, page
+	size_t poolBytes;
+    char* baseAddr;
+    vector<char*> freeFrames;
+    int fd;
+	unordered_map<string, weak_ptr<MyDB_Page>> lookUp;
+	int accum;
 };
 
 #endif
-
-

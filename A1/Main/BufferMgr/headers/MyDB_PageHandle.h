@@ -1,14 +1,16 @@
-
 #ifndef PAGE_HANDLE_H
 #define PAGE_HANDLE_H
 
 #include <memory>
-#include "../headers/MyDB_Page.h"
-
+#include <MyDB_BufferManager.h>
 // page handles are basically smart pointers
 using namespace std;
+
+class MyDB_BufferManager; 
+class MyDB_Page;
+
 class MyDB_PageHandleBase;
-typedef shared_ptr <MyDB_PageHandleBase> MyDB_PageHandle;
+typedef shared_ptr<MyDB_PageHandleBase> MyDB_PageHandle;
 
 class MyDB_PageHandleBase {
 
@@ -19,13 +21,15 @@ public:
 	// access the raw bytes in this page... if the page is not currently
 	// in the buffer, then the contents of the page are loaded from 
 	// secondary storage. 
-	void *getBytes ();
+	void* getBytes ();
 
 	// let the page know that we have written to the bytes.  Must always
 	// be called once the page's bytes have been written.  If this is not
 	// called, then the page will never be marked as dirty, and the page
 	// will never be written to disk. 
 	void wroteBytes ();
+
+	MyDB_PageHandleBase (shared_ptr<MyDB_Page> page);
 
 	// There are no more references to the handle when this is called...
 	// this should decrmeent a reference count to the number of handles
@@ -34,19 +38,9 @@ public:
 	// become unpinned.  
 	~MyDB_PageHandleBase ();
 
-	// FEEL FREE TO ADD ADDITIONAL PUBLIC METHODS
-    MyDB_PageHandleBase (MyDB_PagePtr page) {
-        this->page = page;
-        this->page->addRef();
-    }
-
-	MyDB_PagePtr getPage() {
-		return this->page;
-	}
+	shared_ptr<MyDB_Page> page;
 
 private:
-	// YOUR CODE HERE
-    MyDB_PagePtr page;
 };
 
 #endif

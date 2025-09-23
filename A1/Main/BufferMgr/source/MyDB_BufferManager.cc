@@ -1,219 +1,194 @@
-
 #ifndef BUFFER_MGR_C
 #define BUFFER_MGR_C
 
-//#include "MyDB_BufferManager.h"
+#include "MyDB_BufferManager.h"
+#include "LRUCache.h"
+#include "MyDB_Page.h"
+
 #include <string>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <stdexcept>
+#include <iostream>
+#include <cstring>
 
-#include "../../BufferMgr/headers/MyDB_BufferManager.h"
-
-#include<stdio.h>
-#include<stdlib.h>
-#include<string.h>
-#include<unistd.h>
-#include<sys/types.h>
-#include<sys/stat.h>
-#include<fcntl.h>
-
-#include <climits>
 
 using namespace std;
 
-MyDB_PageHandle MyDB_BufferManager :: getPage (MyDB_TablePtr whichTable, long i) {
-    pair<MyDB_TablePtr, long> whichPage = make_pair(whichTable, i);
-    if (this->page_map.count(whichPage) == 0) {
-        if (this->buffer.size() == 0) {
-            if (this->evictLRU() == false)
-                return nullptr;
-        }
-        else {
-            // MyDB_TablePtr whichTable, long page_id, bool pinned, MyDB_BufferManager& bufferManager, long timeStamp, bool buffered
-            MyDB_PagePtr page = make_shared <MyDB_Page> (whichTable, i, false, *this, this->globalTimeStamp, false);
-            this->globalTimeStamp += 1;
-            this->page_map[whichPage] = page;
-            MyDB_PageHandle handle = make_shared <MyDB_PageHandleBase>(page);
-            return handle;
+MyDB_PageHandle MyDB_BufferManager::getPage(MyDB_TablePtr table, long pageNum) {
+    string key = table->getName() + "_" + std::to_string(pageNum);
+
+    // Hit
+    auto it = lookUp.find(key);
+    if (it != lookUp.end()) {
+        if (auto sp = it->second.lock()) {
+            return make_shared<MyDB_PageHandleBase>(sp);
+        } else {
+            // Stale entry → drop it and fall through to create fresh
+            lookUp.erase(it);
         }
     }
-	else {
-        this->page_map[whichPage]->setTimeStamp(this->globalTimeStamp);// update the timeStamp of page
-        this->globalTimeStamp += 1;
-        MyDB_PageHandle handle = make_shared <MyDB_PageHandleBase>(this->page_map[whichPage]);// make another handle to the page
-        return handle;
-    }
+    auto sp = make_shared<MyDB_Page>(table, pageNum, this);
+    lookUp[key] = sp;
+    return make_shared<MyDB_PageHandleBase>(sp);
 }
+
 
 MyDB_PageHandle MyDB_BufferManager :: getPage () {
-    if (this->buffer.size() == 0) {
-        if (this->evictLRU() == false)
-            return nullptr;
-    }
-    pair<MyDB_TablePtr, long> whichPage = make_pair(nullptr, this->anonIndex);
-    MyDB_PagePtr page = make_shared <MyDB_Page> (nullptr, this->anonIndex, false, *this, this->globalTimeStamp, false);
-    this->anonIndex += 1;
-    this->globalTimeStamp += 1;
-    this->page_map[whichPage] = page;
-    MyDB_PageHandle handle = make_shared <MyDB_PageHandleBase>(page);
-    return handle;
+	auto page = std::make_shared<MyDB_Page>(nullptr,  -1, this);
+	page->anomalous = true;
+    return make_shared<MyDB_PageHandleBase>(page);
 }
 
-MyDB_PageHandle MyDB_BufferManager :: getPinnedPage (MyDB_TablePtr whichTable, long i) {
-//    cout << "getPinnedPage is called" << endl;
-    pair<MyDB_TablePtr, long> whichPage = make_pair(whichTable, i);
-    if (this->page_map.count(whichPage) == 0) {
-        if (this->buffer.size() == 0) {
-            if (this->evictLRU() == false)
-                return nullptr;
-        }
-        else {
-            MyDB_PagePtr page = make_shared <MyDB_Page> (whichTable, i, true, *this, this->globalTimeStamp, false);
-            this->globalTimeStamp += 1;
-            this->page_map[whichPage] = page;
-            MyDB_PageHandle handle = make_shared <MyDB_PageHandleBase>(page);
-            return handle;
+MyDB_PageHandle MyDB_BufferManager :: getPinnedPage (MyDB_TablePtr table, long pageNum) {
+	string key = table->getName() + "_" + std::to_string(pageNum);
+    auto it = lookUp.find(key);
+    if (it != lookUp.end()) {
+        if (auto sp = it->second.lock()) {
+            sp->pinned = true;
+            lru->protect(sp.get()); 
+            if (sp->pageData == nullptr) {
+                char* frame = getAFrame();
+                sp->pageData = frame;
+            }
+            return make_shared<MyDB_PageHandleBase>(sp);
+        } else {
+            lookUp.erase(it);
         }
     }
-    else {
-        this->page_map[whichPage]->setTimeStamp(this->globalTimeStamp);
-        this->globalTimeStamp += 1;
-        MyDB_PageHandle handle = make_shared <MyDB_PageHandleBase>(this->page_map[whichPage]);
-        return handle;
-    }
+    auto sp = make_shared<MyDB_Page>(table, pageNum, this);
+    sp->pinned = true;
+    char* frame = getAFrame();
+    sp->pageData = frame;
+    lookUp[key] = sp;
+    return make_shared<MyDB_PageHandleBase>(sp);
 }
 
 MyDB_PageHandle MyDB_BufferManager :: getPinnedPage () {
-    if (this->buffer.size() == 0) {
-        if (this->evictLRU() == false)
-            return nullptr;
-    }
-    pair<MyDB_TablePtr, long> whichPage = make_pair(nullptr, this->anonIndex);
-    MyDB_PagePtr page = make_shared <MyDB_Page> (nullptr, this->anonIndex, true, *this, this->globalTimeStamp, false);
-    this->anonIndex += 1;
-    this->globalTimeStamp += 1;
-    this->page_map[whichPage] = page;
-    MyDB_PageHandle handle = make_shared <MyDB_PageHandleBase>(page);
-    return handle;
+	auto page = make_shared<MyDB_Page>(nullptr,  -1, this);
+	page->anomalous = true;
+	page->pinned = true;
+    char* frame = getAFrame();
+    page->pageData = frame;
+    return make_shared<MyDB_PageHandleBase>(page);
 }
 
 void MyDB_BufferManager :: unpin (MyDB_PageHandle unpinMe) {
-    unpinMe->getPage()->setPinned(false);
+    auto pg = unpinMe->page;
+	pg->pinned = false;
+    lru->makeMRU(pg.get());
 }
 
-MyDB_BufferManager :: MyDB_BufferManager (size_t pageSize, size_t numPages, string tempFile): pageSize(pageSize), numPages(numPages), tempFile(tempFile){
-//    cout << "Table is created" << endl;
-    this->anonIndex = 0;
-    this->globalTimeStamp = 0;
+// should allocate a frame for page
+void MyDB_BufferManager :: materialize (MyDB_Page* page) {
+    if (page->pageData == nullptr) {
+        char* frame = getAFrame();                          // may evict someone
+        page->pageData = frame;                             // <-- assign first
+
+        if (page->anomalous) {
+            if (page->tempOffset < 0) {
+                std::memset(page->pageData, 0, pageSize);
+            } else {
+                ::pread(fd, page->pageData, pageSize, page->tempOffset);
+            }
+        } else {
+            std::string path = page->table->getStorageLoc();
+            int dbfd = ::open(path.c_str(), O_CREAT | O_RDWR | O_FSYNC, 0666);
+            off_t off = (off_t)page->pageNum * (off_t)pageSize;
+            ::pread(dbfd, page->pageData, pageSize, off);
+            ::close(dbfd);
+        }
+    }               
+
+    if (!page->pinned) {
+        lru->makeMRU(page); 
+    }
+}
+
+char* MyDB_BufferManager :: getAFrame () {
+    if (freeFrames.empty()) {
+        MyDB_Page* victim = lru->evictLRU();
+        if (victim->dirty) {
+            if (victim->anomalous) {\
+                off_t off;
+                if (victim->tempOffset < 0) {
+                    off = accum * pageSize;
+                    victim->tempOffset = off; 
+                    accum += 1;
+                } else {
+                    off = victim->tempOffset;
+                }
+                ::pwrite(fd, victim->pageData, pageSize, off);
+            } else {
+                string path = victim->table->getStorageLoc();
+                int dbfd = ::open(path.c_str(), O_CREAT | O_RDWR | O_FSYNC, 0666);
+                off_t off = static_cast<off_t>(victim->pageNum) * static_cast<off_t>(pageSize);
+                ::pwrite(dbfd, victim->pageData, pageSize, off);
+                ::close(dbfd);
+            }
+            victim->dirty = false;
+        }      
+        freeFrames.push_back(victim->pageData);
+	    victim->pageData = nullptr;
+    }
+    char* frame = freeFrames.back();
+    freeFrames.pop_back();
+    return frame;
+}
+
+// should free the frame attach to page
+void MyDB_BufferManager :: cleanFrame (MyDB_Page* victim) {
+    lru->protect(victim);
+    if (victim->dirty) {
+        if (victim->anomalous) {\
+            off_t off;
+            if (victim->tempOffset < 0) {
+                off = accum * pageSize;
+                victim->tempOffset = off; 
+                accum += 1;
+            } else {
+                off = victim->tempOffset;
+            }
+            ::pwrite(fd, victim->pageData, pageSize, off);
+        } else {
+            string path = victim->table->getStorageLoc();
+            int dbfd = ::open(path.c_str(), O_CREAT | O_RDWR | O_FSYNC, 0666);
+            off_t off = static_cast<off_t>(victim->pageNum) * static_cast<off_t>(pageSize);
+            ::pwrite(dbfd, victim->pageData, pageSize, off);
+            ::close(dbfd);
+        }
+        victim->dirty = false;
+    }      
+    freeFrames.push_back(victim->pageData);
+}
+
+MyDB_BufferManager::MyDB_BufferManager(size_t pageSize, size_t numPages, string tempFile) : pageSize(pageSize), tempFile(std::move(tempFile)) {
+	poolBytes = pageSize * numPages;
+    baseAddr = new (std::nothrow) char[poolBytes];
+    // open/create the temp file for anonymous pages
+    fd = ::open(tempFile.c_str(), O_CREAT | O_RDWR | O_FSYNC, 0666);
+    accum = 0;
+    // available memory pointers in buffer
 	for (size_t i = 0; i < numPages; i++) {
-		buffer.push_back(malloc(pageSize));
+		char* framePtr = baseAddr + i * pageSize;
+		freeFrames.push_back(framePtr);
 	}
+	// lru
+	this->lru = new LRUCache();
 }
 
 MyDB_BufferManager :: ~MyDB_BufferManager () {
-    for (auto page : buffer) {
-        free(page);
+    if (fd > 0) {
+        ::close(fd);
     }
-}
-
-void MyDB_BufferManager :: remove(MyDB_Page &page){
-//    cout << page.bytes << endl;
-    int flag = 0;
-    int fd = 0;
-    if (page.dirty) {
-        // TODO
-        // load from page.bytes to (page.whichTable, page.page_id)
-//        int fd;
-        if (page.whichTable == nullptr){
-            fd = open(tempFile.c_str(), O_CREAT | O_RDWR | O_SYNC, 0666);
-//            fd = open(tempFile.c_str(), O_CREAT | O_RDWR, 0666);
-        }
-        else{
-            fd = open(page.whichTable->getStorageLoc().c_str(), O_CREAT | O_RDWR | O_SYNC, 0666);
-//            fd = open(page.whichTable->getStorageLoc().c_str(), O_CREAT | O_RDWR, 0666);
-        }
-        lseek(fd, page.getPageID() * this->pageSize, SEEK_SET);
-        flag = write(fd, page.bytes, this->pageSize);
-//        _commit(fd);// for windows
-        close(fd);
-        page.setDirty(false);
-    }
-    page.setBuffered(false);
-    buffer.push_back(page.bytes);
-}
-
-void MyDB_BufferManager :: process(MyDB_Page &page){
-    if (page.getBuffered() == false) { // if not buffered, then copy from table to bufferManager
-        if (this->buffer.size() == 0) {
-            if (this->evictLRU() == false)
-                return;
-        }
-        page.setBuffered(true);
-        page.bytes = this->buffer[this->buffer.size()-1];
-        this->buffer.pop_back();
-        // TODO
-        // load from (page.whichTable, page.page_id) to page.bytes
-        int fd;
-        if (page.whichTable == nullptr){
-            fd = open(this->tempFile.c_str(), O_CREAT | O_RDWR | O_SYNC, 0666);
-//            fd = open(this->tempFile.c_str(), O_CREAT | O_RDWR, 0666);
-        }
-        else{
-            fd = open(page.whichTable->getStorageLoc().c_str(), O_CREAT | O_RDWR | O_SYNC, 0666);
-//            fd = open(page.whichTable->getStorageLoc().c_str(), O_CREAT | O_RDWR, 0666);
-        }
-        lseek(fd, page.getPageID() * this->pageSize, SEEK_SET);
-        read(fd, page.bytes, this->pageSize);
-//        _commit(fd);// for windows
-        close(fd);
-    }
-}
-
-// LRU Algorithm
-bool MyDB_BufferManager :: evictLRU(){
-    long minTimeStamp = LONG_MAX; // max_long, begin() can be pinned
-
-    // search for minTimeStamp
-    for (auto key = this->page_map.begin(); key != this->page_map.end(); ++key) {
-        MyDB_PagePtr page = key->second;
-        if (page->getTimeStamp() < minTimeStamp && page->getPinned() == false && page->getBuffered() == true) {
-            minTimeStamp = page->getTimeStamp();
-        }
-    }
-
-    // cannot find the page to be evicted
-    if (minTimeStamp == LONG_MAX) {
-        return false;
-    }
-    // remove
-    else {
-        for (auto key = this->page_map.begin(); key != this->page_map.end(); ++key) {
-            MyDB_PagePtr page = key->second;
-            if (page->getTimeStamp() == minTimeStamp) {
-                if (page->dirty) {
-                    // TODO
-                    // load from page->bytes to (page->whichTable, page->page_id)
-                    int fd;
-                    if (page->whichTable == nullptr){
-                        fd = open(tempFile.c_str(), O_CREAT | O_RDWR | O_SYNC, 0666);
-//                        fd = open(tempFile.c_str(), O_CREAT | O_RDWR, 0666);
-                    }
-                    else{
-                        fd = open(page->whichTable->getStorageLoc().c_str(), O_CREAT | O_RDWR | O_SYNC, 0666);
-//                        fd = open(page->whichTable->getStorageLoc().c_str(), O_CREAT | O_RDWR, 0666);
-                    }
-                    lseek(fd, page->getPageID() * this->pageSize, SEEK_SET);
-                    write(fd, page->bytes, this->pageSize);
-//                    _commit(fd);// for windows
-                    close(fd);
-                    page->setDirty(false);
-                }
-                page->setBuffered(false);
-                buffer.push_back(page->bytes);
-//                buffer.push_back((char*)malloc(pageSize));
-            }
-        }
-        return true;
-    }
+	fd = -1;
+	::unlink(tempFile.c_str());
+	
+	delete[] baseAddr;
+    baseAddr = nullptr;
+    poolBytes = 0;
+	delete lru;
 }
 	
 #endif
-

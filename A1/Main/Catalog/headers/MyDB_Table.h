@@ -8,8 +8,7 @@
 // create a smart pointer for database tables
 using namespace std;
 class MyDB_Table;
-
-typedef shared_ptr <MyDB_Table> MyDB_TablePtr; 
+typedef shared_ptr <MyDB_Table> MyDB_TablePtr;
 
 // this class encapsulates the notion of a database table
 // DO NOT MODIFY!

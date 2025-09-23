@@ -27,7 +27,7 @@ What do you want to build/clean?\n
 2. Stack unit tests (use clang++ compiler for Clear)
 """)
 
-ans=raw_input("Select the module(s) you want to build or clean. ")
+ans=input("Select the module(s) you want to build or clean. ")
 
 if ans=="1":
 	print("\nOK, building stack unit tests.")
