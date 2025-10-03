@@ -18,9 +18,7 @@ This repo is for assignments of COMP 530: Database System Implementation. The wh
 
 ### Usage
 
-To get any credit on these assignments, the code must be compiled and run on Clear.
-
-However, clear does not have SCons installed. So in the home directory, follow the following steps:
+In the home directory, follow the following steps:
 
 1. Download SCons: `wget --no-check-certificate https://pypi.python.org/packages/source/S/SCons/scons-3.1.2.tar.gz`
 2. Unpack it: `gunzip scons-3.1.2.tar.gz` `tar xvf scons-3.1.2.tar`
